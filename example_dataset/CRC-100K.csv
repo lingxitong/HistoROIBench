@@ -1,0 +1,5 @@
+train_path,train_label,val_path,val_label,test_path,test_label
+/Path/To/Your_Dir/NCT-CRC-HE-100K/ADI/ADI-AAAMHQMK.tif,8,,,/Path/To/Your_Dir/CRC-VAL-HE-7K/ADI/ADI-TCGA-AAICEQFN.tif,8.0
+/Path/To/Your_Dir/NCT-CRC-HE-100K/ADI/ADI-AACCGLYD.tif,8,,,/Path/To/Your_Dir/CRC-VAL-HE-7K/ADI/ADI-TCGA-AAKTCYHC.tif,8.0
+/Path/To/Your_Dir/NCT-CRC-HE-100K/ADI/ADI-AACVGRFT.tif,8,,,/Path/To/Your_Dir/CRC-VAL-HE-7K/ADI/ADI-TCGA-AAWDNKDK.tif,8.0
+/Path/To/Your_Dir/NCT-CRC-HE-100K/ADI/ADI-AADGNDRG.tif,8,,,/Path/To/Your_Dir/CRC-VAL-HE-7K/ADI/ADI-TCGA-ACCKVFLM.tif,8.0

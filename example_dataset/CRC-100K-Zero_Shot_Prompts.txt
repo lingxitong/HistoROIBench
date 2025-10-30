@@ -1,0 +1,9 @@
+This is a pathology image showing normal tissue characteristics
+This is a pathology image showing stroma tissue characteristics
+This is a pathology image showing tumor tissue characteristics
+This is a pathology image showing muscle tissue characteristics
+This is a pathology image showing mucosa tissue characteristics
+This is a pathology image showing lymphocytes tissue characteristics
+This is a pathology image showing debris tissue characteristics
+This is a pathology image showing background tissue characteristics
+This is a pathology image showing adipose tissue characteristics
