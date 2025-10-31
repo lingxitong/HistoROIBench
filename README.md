@@ -16,31 +16,50 @@ HistoROIBench provides a standardized evaluation pipeline for testing various pr
 
 ## 🤖 Supported Models
 
-The framework supports 20+ pretrained models:
+The framework supports 20+ pretrained patch encoders, all loadable via the `encoder_factory()` function. Models are loaded via `--model_name` argument in feature extraction.
 
-### Mainstream Pathology Models
-- **CONCH** (v1, v1.5) - Contrastive learning pathology model
-- **UNI** (v1, v2) - Universal pathology foundation model
-- **CTransPath** - Transformer-based pathology model
-- **Phikon** (v1, v2) - Large-scale pathology pretrained model
-- **Virchow** (v1, v2) - Pathology Vision Transformer
-- **GigaPath** - Ultra-large-scale pathology model
-- **H-optimus** (0, 1) - Optimized pathology encoders
-- **Hibou-L** - Large pathology model
-- **MUSK** - Multi-scale pathology feature extractor
+**Mainstream Pathology Models**
 
-### Kaiko Series
-- kaiko-vitb8, kaiko-vitb16
-- kaiko-vits8, kaiko-vits16
-- kaiko-vitl14
+| Model | Model Name | Link |
+|-------|-----------|------|
+| **CONCH** (v1) | `conch_v1` | [MahmoodLab/CONCH](https://huggingface.co/MahmoodLab/CONCH) |
+| **CONCH** (v1.5) | `conch_v15` | [MahmoodLab/conchv1_5](https://huggingface.co/MahmoodLab/conchv1_5) |
+| **UNI** (v1) | `uni_v1` | [MahmoodLab/UNI](https://huggingface.co/MahmoodLab/uni) |
+| **UNI** (v2) | `uni_v2` | [MahmoodLab/UNI2-h](https://huggingface.co/MahmoodLab/UNI2-h) |
+| **CTransPath** | `ctranspath` | [MahmoodLab/hest-bench](https://huggingface.co/datasets/MahmoodLab/hest-bench/tree/main/fm_v1/ctranspath) |
+| **Phikon** (v1) | `phikon` | [owkin/phikon](https://huggingface.co/owkin/phikon) |
+| **Phikon** (v2) | `phikon_v2` | [owkin/phikon-v2](https://huggingface.co/owkin/phikon-v2) |
+| **Virchow** (v1) | `virchow` | [paige-ai/Virchow](https://huggingface.co/paige-ai/Virchow) |
+| **Virchow** (v2) | `virchow2` | [paige-ai/Virchow2](https://huggingface.co/paige-ai/Virchow2) |
+| **GigaPath** | `gigapath` | [prov-gigapath/prov-gigapath](https://huggingface.co/prov-gigapath/prov-gigapath) |
+| **H-Optimus** (0) | `hoptimus0` | [bioptimus/H-optimus-0](https://huggingface.co/bioptimus/H-optimus-0) |
+| **H-Optimus** (1) | `hoptimus1` | [bioptimus/H-optimus-1](https://huggingface.co/bioptimus/H-optimus-1) |
+| **Hibou-L** | `hibou_l` | [histai/hibou-L](https://huggingface.co/histai/hibou-L) |
+| **MUSK** | `musk` | [xiangjx/musk](https://huggingface.co/xiangjx/musk) |
 
-### Lunit Series
-- lunit-vits8
+**Kaiko Series**
 
-### General Vision Models
-- **ResNet50** - Classic convolutional neural network
+| Model | Model Name | Link |
+|-------|-----------|------|
+| **Kaiko-ViT-S/8** | `kaiko-vits8` | [Kaiko Models](https://huggingface.co/collections/1aurent/kaikoai-models-66636c99d8e1e34bc6dcf795) |
+| **Kaiko-ViT-S/16** | `kaiko-vits16` | [Kaiko Models](https://huggingface.co/collections/1aurent/kaikoai-models-66636c99d8e1e34bc6dcf795) |
+| **Kaiko-ViT-B/8** | `kaiko-vitb8` | [Kaiko Models](https://huggingface.co/collections/1aurent/kaikoai-models-66636c99d8e1e34bc6dcf795) |
+| **Kaiko-ViT-B/16** | `kaiko-vitb16` | [Kaiko Models](https://huggingface.co/collections/1aurent/kaikoai-models-66636c99d8e1e34bc6dcf795) |
+| **Kaiko-ViT-L/14** | `kaiko-vitl14` | [Kaiko Models](https://huggingface.co/collections/1aurent/kaikoai-models-66636c99d8e1e34bc6dcf795) |
 
-> **Note**: Configure the corresponding model weight paths in `model_utils/model_weights.json` before use.
+**Lunit Series**
+
+| Model | Model Name | Link |
+|-------|-----------|------|
+| **Lunit-ViT-S/8** | `lunit-vits8` | [1aurent/lunit_dino](https://huggingface.co/1aurent/vit_small_patch8_224.lunit_dino) |
+
+**General Vision Models**
+
+| Model | Model Name | Link |
+|-------|-----------|------|
+| **ResNet50** | `resnet50` | [timm/resnet50](https://huggingface.co/timm/resnet50.tv_in1k) |
+
+> **Note**: Configure the corresponding model weight paths in `model_utils/model_weights.json` before use. If a model's weight path is empty, the framework will attempt to automatically download from Hugging Face Hub (requires internet connection). Models requiring specific installations will return error messages with additional instructions. Gated models on HuggingFace require access requests.
 
 ## 📝 Supported Tasks
 
