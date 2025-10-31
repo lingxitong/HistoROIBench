@@ -110,7 +110,7 @@ Use `00-ROI_Feature_Extract.py` to extract image features from datasets.
 --resize_size         # Image resize size, default: 448
 ```
 
-**Inference Parameters:**
+**Training Parameters:**
 ```bash
 --batch_size          # Batch size, default: 256
 --num_workers         # Number of data loading workers, default: 8
