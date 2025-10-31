@@ -28,7 +28,6 @@ class LogisticRegression:
     def fit(self, feats, labels):
         feat_dim = feats.shape[1]
         num_classes = len(torch.unique(labels))
-        print('seed:',self.random_state)
 
         # set random seed
         torch.manual_seed(self.random_state)

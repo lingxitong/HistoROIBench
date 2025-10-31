@@ -110,7 +110,7 @@ Use `00-ROI_Feature_Extract.py` to extract image features from datasets.
 --resize_size         # Image resize size, default: 448
 ```
 
-**Training Parameters:**
+**Inference Parameters:**
 ```bash
 --batch_size          # Batch size, default: 256
 --num_workers         # Number of data loading workers, default: 8
@@ -254,27 +254,46 @@ Evaluation results will be saved in the directory specified by `--log_dir`, orga
 
 ```
 log_dir/
-├── EXP_NAME.txt                    # Experiment description
 ├── Linear-Probe/
-│   ├── Linear-Probe_metrics.txt    # Evaluation metrics
-│   ├── Linear-Probe_predictions.csv # Prediction results
-│   └── ...
+│   ├── Linear-Probe_detailed_results.csv    # Per-sample predictions with probabilities
+│   └── Linear-Probe_complete_results.json  # Complete metrics and confusion matrix
 ├── KNN/
-│   ├── KNN_metrics.txt
-│   └── ...
+│   ├── KNN_detailed_results.csv
+│   └── KNN_complete_results.json
 ├── Proto/
-│   ├── Proto_metrics.txt
-│   └── ...
+│   ├── Proto_detailed_results.csv
+│   └── Proto_complete_results.json
 ├── Few-shot/
 │   ├── way_2/
-│   │   ├── Fewshot_2way_1shot_metrics.txt
-│   │   ├── Fewshot_2way_2shot_metrics.txt
+│   │   ├── Fewshot_2way_1shot_detailed_results.csv
+│   │   ├── Fewshot_2way_1shot_complete_results.json
+│   │   ├── Fewshot_2way_1shot_per_episode_metrics.json
+│   │   ├── Fewshot_2way_1shot_few_shot_results.json
 │   │   └── ...
 │   └── ...
 └── Zero-shot/
-    ├── Zero-shot_metrics.txt
-    └── ...
+    ├── Zero-shot_detailed_results.csv
+    └── Zero-shot_complete_results.json
 ```
+
+**File Descriptions:**
+
+- **`*_detailed_results.csv`**: Contains per-sample predictions with columns:
+  - `img_name`: Image file name (if available)
+  - `true_label`: True class label
+  - `predicted_label`: Predicted class label
+  - `probabilities`: Probability distribution over all classes
+
+- **`*_complete_results.json`**: Contains comprehensive evaluation metrics:
+  - `task_name`: Task identifier
+  - `metrics`: Dictionary with accuracy, balanced_accuracy, precision, recall, f1_score, auroc, etc.
+  - `confusion_matrix`: Confusion matrix as 2D array
+  - `num_samples`: Total number of samples
+  - `num_classes`: Number of classes
+  - `additional_info`: Task-specific additional information
+
+- **`*_per_episode_metrics.json`** (Few-shot only): Metrics for each individual episode
+- **`*_few_shot_results.json`** (Few-shot only): Aggregated few-shot metrics with mean and std across episodes
 
 Each task's metrics file contains:
 - Accuracy
@@ -282,7 +301,7 @@ Each task's metrics file contains:
 - Precision, Recall, F1 Score
 - Confusion Matrix
 - ROC-AUC (if applicable)
-- Detailed per-class performance metrics
+- Detailed per-sample prediction probabilities
 
 ## 📁 Data Format
 
@@ -303,22 +322,15 @@ example_dataset/
 
 The dataset split CSV file should contain the following columns:
 
-**Format 1: Standard Format (Recommended)**
-```csv
-image_path,label,split
-/path/to/image1.png,0,train
-/path/to/image2.png,1,train
-/path/to/image3.png,0,test
-...
-```
-
-**Format 2: Train/Validation/Test Separated Format**
+**Train/Validation/Test Separated Format**
 ```csv
 train_path,train_label,val_path,val_label,test_path,test_label
 /path/to/train1.tif,8,,,/path/to/test1.tif,8.0
 /path/to/train2.tif,8,,,/path/to/test2.tif,8.0
 ...
 ```
+
+In general, no validation set is set for the evaluation of ROI BenchMark Testing.
 
 > **Example**: See `example_dataset/CRC-100K.csv`
 
@@ -332,14 +344,7 @@ train_path,train_label,val_path,val_label,test_path,test_label
 
 `class2id_txt` file format (both formats supported):
 
-**Format 1: ID:ClassName**
-```
-0:class_name_1
-1:class_name_2
-2:class_name_3
-```
-
-**Format 2: ClassName,ID (CSV format, Recommended)**
+**ClassName,ID**
 ```
 class_name_1,0
 class_name_2,1
@@ -408,40 +413,69 @@ Before use, configure model weight paths in `model_utils/model_weights.json`:
 
 If a model's weight path is an empty string `""`, the framework will attempt to automatically download from Hugging Face Hub (requires internet connection).
 
-## 📦 Dependencies
+## 🔧 Model Extension
 
-```bash
-torch
-torchvision
-numpy
-scikit-learn
-pandas
-tqdm
+If you want to add a new model to the framework, especially for multimodal models that support zero-shot evaluation, you need to implement the `run_zero_shot` method in your model class.
+
+### Zero-shot Support for Multimodal Models
+
+For multimodal models (e.g., vision-language models), if you want to enable zero-shot evaluation, your model class should implement the `run_zero_shot` method. This method enables the model to perform classification using text prompts without any training examples.
+
+**Method Signature:**
+```python
+def run_zero_shot(self, texts, image_features: torch.Tensor, device: str):
+    """
+    Perform zero-shot classification using text prompts and image features.
+    
+    Args:
+        texts: List of text prompts (one per class)
+        image_features: Pre-extracted image features tensor [N, D]
+        device: Device string (e.g., 'cuda:0' or 'cpu')
+    
+    Returns:
+        probs: Classification probabilities tensor [N, num_classes]
+    """
 ```
 
-Recommended: Python 3.8+ and PyTorch 1.10+
+### Implementation Reference
 
-## 🔧 Project Structure
+You can refer to the `Conchv1InferenceEncoder` implementation in `model_utils/model_factory.py` for a complete example:
 
+```python
+class Conchv1InferenceEncoder(BasePatchEncoder):
+    # ... initialization code ...
+    
+    def _from_text_to_embeddings(self, texts, device: str):
+        """Convert text prompts to embeddings."""
+        from .model_zoo.conch.open_clip_custom import tokenize
+        tokenized_prompts = tokenize(texts=texts, tokenizer=self.tokenizer)
+        tokenized_prompts = tokenized_prompts.to(device)
+        text_features = self.model.encode_text(tokenized_prompts)
+        return text_features
+
+    def run_zero_shot(self, texts, image_features: torch.Tensor, device: str):
+        """Perform zero-shot classification."""
+        from torch.nn import functional as F
+        image_features = image_features.to(device)
+        text_features = self._from_text_to_embeddings(texts, device)
+        logit_scale = self.model.logit_scale.exp()
+        similarity = torch.matmul(image_features, text_features.T) * logit_scale
+        probs = F.softmax(similarity, dim=-1)
+        return probs.detach()
 ```
-HistoROIBench/
-├── 00-ROI_Feature_Extract.py        # Feature extraction script
-├── 01-ROI_BenchMark_Main.py         # Main benchmarking script
-├── model_utils/                      # Model utilities
-│   ├── model_factory.py             # Model factory
-│   ├── model_weights.json           # Model weights configuration
-│   └── model_zoo/                   # Model implementations
-├── dataset_utils/                    # Dataset utilities
-│   └── roi_dataset.py               # ROI dataset class
-├── task_utils/                       # Task evaluation utilities
-│   ├── eval_linear_probe.py         # Linear Probe evaluation
-│   ├── fewshot.py                   # Few-shot evaluation
-│   ├── zero_shot.py                 # Zero-shot evaluation
-│   ├── unified_metrics.py           # Unified metrics saver
-│   └── common_utils.py              # Common utility functions
-├── README.md                         # Chinese README
-└── README_EN.md                      # This file (English README)
-```
+
+**Key Implementation Steps:**
+
+1. **Text Encoding**: Convert text prompts to embeddings using the model's text encoder
+2. **Feature Alignment**: Ensure image features and text features are on the same device
+3. **Similarity Calculation**: Compute similarity between image features and text features (often using cosine similarity with a learned temperature scale)
+4. **Probability Conversion**: Apply softmax to convert similarities to classification probabilities
+
+**Notes:**
+- The `image_features` parameter contains pre-extracted features from the feature extraction stage
+- The `texts` parameter is a list of prompts, one for each class in the same order as `class2id_txt`
+- The method should return a tensor of shape `[N, num_classes]` where N is the number of images
+- If your model doesn't support zero-shot (e.g., vision-only models), you don't need to implement this method, and zero-shot evaluation will be skipped
 
 ## 💡 Best Practices
 
@@ -459,14 +493,14 @@ Here's a complete example workflow:
 ```bash
 # Extract features using CONCH v1
 python 00-ROI_Feature_Extract.py \
-    --dataset_split_csv ./datasets/CAMEL.csv \
-    --class2id_txt ./datasets/CAMEL.txt \
-    --dataset_name CAMEL \
+    --dataset_split_csv ./example_dataset/CRC-100K.csv \
+    --class2id_txt ./example_dataset/CRC-100K.txt \
+    --dataset_name CRC-100K \
     --model_name conch_v1 \
     --resize_size 448 \
     --batch_size 128 \
     --device cuda:0 \
-    --save_dir ./features
+    --save_dir ./example_dataset/features
 ```
 
 **Step 2: Run Comprehensive Evaluation**
@@ -474,13 +508,13 @@ python 00-ROI_Feature_Extract.py \
 # Run all evaluation tasks
 python 01-ROI_BenchMark_Main.py \
     --TASK Linear-Probe,KNN,Proto,Few-shot,Zero-shot \
-    --train_feature_file ./features/Dataset_[CAMEL]_Model_[conch_v1]_Size_[448]_train.pt \
-    --test_feature_file ./features/Dataset_[CAMEL]_Model_[conch_v1]_Size_[448]_test.pt \
-    --class2id_txt ./datasets/CAMEL.txt \
+    --train_feature_file ./example_dataset/features/Dataset_[CRC-100K]_Model_[conch_v1]_Size_[448]_train.pt \
+    --test_feature_file ./example_dataset/features/Dataset_[CRC-100K]_Model_[conch_v1]_Size_[448]_test.pt \
+    --class2id_txt ./example_dataset/CRC-100K.txt \
     --zeroshot_model_name conch_v1 \
-    --zeroshot_prompt_file ./datasets/CAMEL_prompts.txt \
-    --log_dir ./results/CAMEL_conch_v1 \
-    --log_description "Comprehensive evaluation of CONCH v1 on CAMEL dataset" \
+    --zeroshot_prompt_file ./example_dataset/CRC-100K-Zero_Shot_Prompts.txt \
+    --log_dir ./results/CRC-100K_conch_v1 \
+    --log_description "Comprehensive evaluation of CONCH v1 on CRC-100K dataset" \
     --device cuda:0
 ```
 
