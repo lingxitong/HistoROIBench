@@ -10,8 +10,9 @@ import torch.nn.functional as F
 from sklearn.metrics import (
     accuracy_score, balanced_accuracy_score, roc_auc_score, 
     f1_score, recall_score, precision_score, cohen_kappa_score,
-    confusion_matrix
+    confusion_matrix, average_precision_score
 )
+from sklearn.preprocessing import label_binarize
 from typing import Dict, Any, Union, List, Optional, Tuple
 import json
 
@@ -68,6 +69,21 @@ def cal_scores(probs: Union[torch.Tensor, np.ndarray],
         macro_auc = roc_auc_score(y_true=labels.numpy(), y_score=probs[:,1].numpy())
         weighted_auc = micro_auc = macro_auc
     
+    # Calculate AUPRC (Average Precision)
+    if num_classes > 2:
+        # For multi-class: use label_binarize to convert labels to one-hot format
+        y_true_bin = label_binarize(labels.numpy(), classes=np.arange(num_classes))  # shape [N, num_classes]
+        probs_np = probs.numpy()
+        
+        # Calculate macro, weighted, and micro AUPRC using sklearn's average_precision_score
+        macro_auprc = average_precision_score(y_true_bin, probs_np, average="macro")
+        weighted_auprc = average_precision_score(y_true_bin, probs_np, average="weighted")
+        micro_auprc = average_precision_score(y_true_bin, probs_np, average="micro")  # useful for imbalanced classes
+    else:
+        # For binary classification
+        macro_auprc = average_precision_score(labels.numpy(), probs[:, 1].numpy())
+        weighted_auprc = micro_auprc = macro_auprc
+    
     # Calculate F1 score
     weighted_f1 = f1_score(labels.numpy(), predicted_classes.numpy(), average='weighted')
     macro_f1 = f1_score(labels.numpy(), predicted_classes.numpy(), average='macro')
@@ -100,6 +116,9 @@ def cal_scores(probs: Union[torch.Tensor, np.ndarray],
         'macro_auc': macro_auc,
         'micro_auc': micro_auc,
         'weighted_auc': weighted_auc,
+        'macro_auprc': macro_auprc,
+        'micro_auprc': micro_auprc,
+        'weighted_auprc': weighted_auprc,
         'macro_f1': macro_f1,
         'micro_f1': micro_f1,
         'weighted_f1': weighted_f1,
@@ -160,6 +179,21 @@ class UnifiedMetricsSaver:
         probs_np = probs.numpy() if isinstance(probs, torch.Tensor) else probs
         labels_np = labels.numpy() if isinstance(labels, torch.Tensor) else labels
         
+        # Optimize: Convert float64 to float32 for faster processing (if precision allows)
+        # This is especially important for sklearn outputs which often use float64
+        if probs_np.dtype == np.float64:
+            print(f"    Converting float64 to float32 for faster processing...")
+            probs_np = probs_np.astype(np.float32)
+        
+        # Ensure data is contiguous in memory for faster operations
+        if not probs_np.flags['C_CONTIGUOUS']:
+            print(f"    Making array contiguous in memory...")
+            probs_np = np.ascontiguousarray(probs_np)
+        
+        # Debug: Print data info for troubleshooting
+        print(f"    Data info - Shape: {probs_np.shape}, Dtype: {probs_np.dtype}, "
+              f"Contiguous: {probs_np.flags['C_CONTIGUOUS']}, Memory: {probs_np.nbytes / 1024 / 1024:.2f} MB")
+        
         # Calculate predicted results
         predicted_classes = np.argmax(probs_np, axis=1)
         
@@ -186,11 +220,33 @@ class UnifiedMetricsSaver:
                 metrics_data['metric'].append(key)
                 metrics_data['value'].append(str(value))
         
+        # Convert probabilities to list efficiently
+        # For large datasets, this can be slow, so we add progress indication
+        n_samples = len(probs_normalized)
+        print(f"    Converting {n_samples} samples to list format for CSV saving...")
+        
+        # Use more efficient conversion: convert entire array to list first, then process
+        # This is faster than iterating row by row
+        if n_samples > 10000:
+            # For large datasets, convert in chunks with progress
+            chunk_size = 10000
+            probabilities_list = []
+            for i in range(0, n_samples, chunk_size):
+                end_idx = min(i + chunk_size, n_samples)
+                chunk_probs = probs_normalized[i:end_idx]
+                # Convert chunk to list of lists more efficiently
+                probabilities_list.extend(chunk_probs.tolist())
+                if (i // chunk_size) % 10 == 0:
+                    print(f"      Processed {end_idx}/{n_samples} samples ({100*end_idx/n_samples:.1f}%)...")
+            print(f"    Completed conversion of {n_samples} samples.")
+        else:
+            # For smaller datasets, convert directly
+            probabilities_list = probs_normalized.tolist()
         
         detailed_data = {
             'true_label': labels_np.tolist(),
             'predicted_label': predicted_classes.tolist(),
-            'probabilities': [probs_normalized[i].tolist() for i in range(len(probs_normalized))]
+            'probabilities': probabilities_list
         }
         
         if img_names is not None:
@@ -210,7 +266,9 @@ class UnifiedMetricsSaver:
             detailed_df = pd.DataFrame(detailed_data)
         
         detailed_path = os.path.join(self.save_dir, f'{self.task_name}_detailed_results.csv')
+        print(f"    Saving detailed results to CSV ({len(detailed_df)} rows)...")
         detailed_df.to_csv(detailed_path, index=False, encoding='utf-8')
+        print(f"    ✓ Detailed results saved to: {detailed_path}")
             
         
         
@@ -272,7 +330,8 @@ class UnifiedMetricsSaver:
         
         # Aggregate metrics for all episodes (only calculate mean and std)
         aggregated_metrics = {}
-        metric_keys = ['acc', 'bacc', 'macro_auc', 'micro_auc', 'weighted_auc', 
+        metric_keys = ['acc', 'bacc', 'macro_auc', 'micro_auc', 'weighted_auc',
+                      'macro_auprc', 'micro_auprc', 'weighted_auprc',
                       'macro_f1', 'micro_f1', 'weighted_f1',
                       'macro_recall', 'micro_recall', 'weighted_recall',
                       'macro_pre', 'micro_pre', 'weighted_pre',

@@ -60,15 +60,18 @@ def eval_knn(
     if combine_trainval and (valid_feats is not None):
         train_feats = torch.cat([train_feats, valid_feats], dim=0)
         train_labels = torch.cat([train_labels, valid_labels], dim=0)
-    if device != None:
-        feats_source = train_feats
-        labels_source = train_labels
-        feats_query = test_feats
-        labels_query = test_labels
+    
+    # Always set source and query features/labels
+    feats_source = train_feats
+    labels_source = train_labels
+    feats_query = test_feats
+    labels_query = test_labels
+    
     logging.info(f"KNN Evaluation: Train Shape {feats_source.shape}")
     logging.info(f"KNN Evaluation: Test Shape {feats_query.shape}")
 
     ### Centering features (for each channel dim across samples)
+    feats_mean = None
     if center_feats:
         feats_mean = feats_source.mean(dim=0, keepdims=True)
         feats_query = feats_query - feats_mean
@@ -81,13 +84,17 @@ def eval_knn(
 
     # Compute prototypes & assert labels are correct cpu-version
     if average_feats:
+        # Convert labels to numpy for indexing if needed
+        if isinstance(labels_source, torch.Tensor):
+            labels_source_np = labels_source.cpu().numpy()
+        else:
+            labels_source_np = labels_source
+        
+        unique_labels = sorted(np.unique(labels_source_np))
         feats_proto = torch.vstack(
-            [feats_source[np.where(labels_source == c)[0]].mean(dim=0) for c in sorted(np.unique(labels_source))]
+            [feats_source[torch.where(labels_source == c)[0]].mean(dim=0) for c in unique_labels]
         )
-        labels_proto = torch.Tensor(sorted(np.unique(labels_source)))
-
-    # Compute prototypes & assert labels are correct gpu-version
-
+        labels_proto = torch.Tensor(unique_labels)
 
     # SimpleShot Eval
     pw_dist = (feats_query[:, None] - feats_proto[None, :]).norm(dim=-1, p=2)
@@ -95,19 +102,98 @@ def eval_knn(
     probs_all_proto = F.softmax(-pw_dist, dim=1)
     labels_pred_proto = labels_proto[pw_dist.min(dim=1).indices]
     proto_metrics = get_eval_metrics(labels_query, labels_pred_proto, prefix="proto_")
+    
     proto_dump = {
         "preds_all": labels_pred_proto.cpu().numpy() if isinstance(labels_pred_proto, torch.Tensor) else labels_pred_proto,
         "targets_all": labels_query.cpu().numpy() if isinstance(labels_query, torch.Tensor) else labels_query,
         "probs_all": probs_all_proto.cpu().numpy() if isinstance(probs_all_proto, torch.Tensor) else probs_all_proto,
         "proto_feats": feats_proto.cpu().numpy(),
-        "proto_mean": feats_mean.cpu().numpy(),
     }
+    if feats_mean is not None:
+        proto_dump["proto_mean"] = feats_mean.cpu().numpy()
 
-    # KNN Eval
-    knn = sklearn.neighbors.KNeighborsClassifier(n_neighbors=n_neighbors, n_jobs=num_workers)
-    knn.fit(feats_source, labels_source)
-    labels_pred_knn = knn.predict(feats_query)
-    probs_knn = knn.predict_proba(feats_query)  # Get probability predictions, already numpy array
+    # KNN Eval - Use PyTorch for faster computation (especially with GPU)
+    # Ensure labels are long type for indexing
+    if not isinstance(labels_source, torch.Tensor):
+        labels_source = torch.tensor(labels_source, dtype=torch.long)
+    else:
+        labels_source = labels_source.long()
+    
+    # Ensure tensors are on the same device
+    if device is not None:
+        if isinstance(device, str):
+            device = torch.device(device)
+        if isinstance(device, torch.device):
+            feats_source = feats_source.to(device)
+            feats_query = feats_query.to(device)
+            labels_source = labels_source.to(device)
+    
+    # Use PyTorch for KNN prediction (much faster, especially with GPU)
+    batch_size = 10000  # Process in batches to avoid memory issues
+    n_query = feats_query.shape[0]
+    labels_pred_knn_list = []
+    probs_knn_list = []
+    
+    # Get unique labels and create mapping
+    unique_labels = torch.unique(labels_source).cpu().numpy()
+    num_classes = len(unique_labels)
+    label_to_idx = {int(label): idx for idx, label in enumerate(unique_labels)}
+    
+    logging.info(f"KNN prediction: processing {n_query} queries in batches of {batch_size}")
+    
+    for i in range(0, n_query, batch_size):
+        end_idx = min(i + batch_size, n_query)
+        feats_query_batch = feats_query[i:end_idx]
+        
+        # Compute pairwise distances: (batch_size, n_source)
+        # Using cosine similarity (since features are normalized) is faster than L2 distance
+        # But for consistency with sklearn, we use L2 distance
+        distances = torch.cdist(feats_query_batch, feats_source, p=2)  # (batch_size, n_source)
+        
+        # Get k nearest neighbors
+        _, topk_indices = torch.topk(distances, k=n_neighbors, dim=1, largest=False)  # (batch_size, k)
+        
+        # Get labels of k nearest neighbors
+        topk_labels = labels_source[topk_indices]  # (batch_size, k)
+        
+        # Vote for prediction (most common label) - vectorized version
+        # Convert labels to indices for bincount
+        max_label = int(labels_source.max().item())
+        label_to_idx_tensor = torch.zeros(max_label + 1, dtype=torch.long, device=topk_labels.device)
+        for label, idx in label_to_idx.items():
+            if label <= max_label:
+                label_to_idx_tensor[label] = idx
+        
+        # Convert topk_labels to indices
+        topk_label_indices = label_to_idx_tensor[topk_labels.long()]  # (batch_size, k)
+        
+        # Use bincount for each sample to count votes (much faster)
+        batch_preds = []
+        batch_probs = []
+        
+        for j in range(topk_label_indices.shape[0]):
+            # Count votes using bincount
+            counts = torch.bincount(topk_label_indices[j], minlength=num_classes).float()
+            # Get most common label (convert back to original label)
+            pred_idx = counts.argmax().item()
+            pred_label = unique_labels[pred_idx]
+            batch_preds.append(pred_label)
+            
+            # Create probability distribution
+            prob = (counts / n_neighbors).cpu().numpy()
+            batch_probs.append(prob)
+        
+        labels_pred_knn_list.extend(batch_preds)
+        probs_knn_list.extend(batch_probs)
+        
+        if (i // batch_size + 1) % 10 == 0:
+            logging.info(f"Processed {end_idx}/{n_query} queries")
+    
+    # Convert to numpy arrays
+    labels_pred_knn = np.array(labels_pred_knn_list)
+    probs_knn = np.array(probs_knn_list)
+    
+    logging.info(f"KNN prediction completed")
     knn_metrics = get_eval_metrics(labels_query, labels_pred_knn, prefix=f"knn{n_neighbors}_")
     knn_dump = {
         "preds_all": labels_pred_knn,

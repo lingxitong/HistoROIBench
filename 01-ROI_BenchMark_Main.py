@@ -1,4 +1,6 @@
 import os
+import re
+import json
 import torch
 # Must be set before importing any other libraries!
 os.environ['OPENBLAS_NUM_THREADS'] = '1'
@@ -22,6 +24,40 @@ warnings.filterwarnings("ignore")
 import numpy as np
 
 
+def parse_experiment_name_from_feature_file(feature_file_path):
+    """
+    Parse experiment name from feature file path.
+    Example: Dataset_[CAMEL]_Model_[conch_v1]_Size_[448]_train.pt -> CAMEL_conch_v1_448
+    
+    Args:
+        feature_file_path: Full path to the feature file
+        
+    Returns:
+        str: Parsed experiment name in format {dataset}_{model}_{size}
+    """
+    # Get filename without path
+    filename = os.path.basename(feature_file_path)
+    
+    # Parse filename using regex
+    # Format: Dataset_[xxx]_Model_[xxx]_Size_[xxx]_train.pt or _test.pt
+    pattern = r'Dataset_\[([^\]]+)\]_Model_\[([^\]]+)\]_Size_\[([^\]]+)\]'
+    match = re.search(pattern, filename)
+    
+    if match:
+        dataset_name = match.group(1)
+        model_name = match.group(2)
+        size = match.group(3)
+        return f"{dataset_name}_{model_name}_{size}"
+    else:
+        # If parsing fails, return filename without extension and _train/_test suffix
+        base_name = os.path.splitext(filename)[0]
+        for suffix in ['_train', '_test']:
+            if base_name.endswith(suffix):
+                base_name = base_name[:-len(suffix)]
+                break
+        return base_name
+
+
 def main(args):
     # Parse TASK string into a list
     TASK = [task.strip() for task in args.TASK.split(',')]
@@ -32,17 +68,38 @@ def main(args):
             raise ValueError(f"Invalid task name: {task}. Valid tasks: {valid_tasks}")
     
     device = args.device
+    
+    # Parse experiment name from training feature file, build actual log directory
+    experiment_name = parse_experiment_name_from_feature_file(args.train_feature_file)
+    actual_log_dir = os.path.join(args.log_dir, experiment_name)
+    print(f"Experiment name: {experiment_name}")
+    print(f"Log directory: {actual_log_dir}")
+    
+    # Update args.log_dir to actual log directory
+    args.log_dir = actual_log_dir
+    
     os.makedirs(args.log_dir,exist_ok=True)
     save_description_path = os.path.join(args.log_dir,'EXP_NAME.txt')
     if args.log_description is not None:
         save_results_as_txt(args.log_description,save_description_path)
+    
+    # Save training parameters to JSON file
+    args_dict = vars(args).copy()
+    # Ensure all values are JSON serializable
+    for key, value in args_dict.items():
+        if not isinstance(value, (str, int, float, bool, list, dict, type(None))):
+            args_dict[key] = str(value)
+    args_save_path = os.path.join(args.log_dir, 'training_config.json')
+    with open(args_save_path, 'w', encoding='utf-8') as f:
+        json.dump(args_dict, f, indent=4, ensure_ascii=False)
+    print(f"Training config saved to: {args_save_path}")
+    
     for task in TASK:
         os.makedirs(os.path.join(args.log_dir,task),exist_ok=True)
     if len(TASK) == 0:
         raise ValueError("No task specified")
     # All tasks are based on pre-extracted feature files, no need to create datasets
     train_dataset = None
-    val_dataset = None
     test_dataset = None
     # Load from pre-extracted feature files
     if not os.path.exists(args.train_feature_file) or not os.path.exists(args.test_feature_file):
@@ -73,27 +130,12 @@ def main(args):
         else:
             raise ValueError("Feature files do not contain label information and no dataset is available. Please use feature files with labels.")
     
-    # Process validation set (if exists)
-    if val_dataset is not None and hasattr(args, 'val_feature_file') and args.val_feature_file:
-        if os.path.exists(args.val_feature_file):
-            val_assert = torch.load(args.val_feature_file)
-            if isinstance(val_assert, dict) and 'embeddings' in val_assert:
-                val_feats = torch.Tensor(val_assert['embeddings'])
-                val_labels = torch.Tensor(val_assert['labels']).type(torch.long)
-            else:
-                val_feats = torch.Tensor(val_assert)
-                val_labels = torch.Tensor([val_dataset[i][1] for i in range(len(val_dataset))]).type(torch.long)
-        else:
-            print("Validation feature file not found, skipping validation set")
-            val_feats, val_labels = None, None
-    else:
-        val_feats, val_labels = None, None
     if 'Linear-Probe' in TASK:
         linprobe_eval_metrics, linprobe_dump = eval_linear_probe(
             train_feats = train_feats,
             train_labels = train_labels,
-            valid_feats = val_feats ,
-            valid_labels = val_labels,
+            valid_feats = None,
+            valid_labels = None,
             test_feats = test_feats,
             test_labels = test_labels,
             device = device,
@@ -116,16 +158,18 @@ def main(args):
         knn_eval_metrics, knn_dump, proto_eval_metrics, proto_dump = eval_knn(
             train_feats = train_feats,
             train_labels = train_labels,
-            valid_feats = val_feats ,
-            valid_labels = val_labels,
+            valid_feats = None,
+            valid_labels = None,
             test_feats = test_feats,
             test_labels = test_labels,
             center_feats = True,
             normalize_feats = True,
             n_neighbors = args.n_neighbors,
             device = device)
+        
     
     if 'KNN' in TASK:
+        print("Saving KNN results...")
         knn_save_dir = os.path.join(args.log_dir, 'KNN')
         # Use unified metrics saving system
         knn_metrics_saver = create_metrics_saver(knn_save_dir, 'KNN')
@@ -135,8 +179,10 @@ def main(args):
             num_classes=len(np.unique(knn_dump['targets_all'])),
             img_names=test_img_names
         )
+        print("✓ KNN results saved successfully")
         
     if 'Proto' in TASK:
+        print("Saving Proto results...")
         proto_save_dir = os.path.join(args.log_dir, 'Proto')
         proto_metrics_saver = create_metrics_saver(proto_save_dir, 'Proto')
         proto_metrics_saver.save_metrics(
@@ -145,6 +191,7 @@ def main(args):
             num_classes=len(np.unique(proto_dump['targets_all'])),
             img_names=test_img_names
         )
+        print("✓ Proto results saved successfully")
         
     
     if 'Few-shot' in TASK:
@@ -160,27 +207,23 @@ def main(args):
         min_samples_per_class = min(class_counts.values())
         print(f"Dataset info: {num_classes} classes, minimum samples: {min_samples_per_class}")
         
-        n_way = args.n_way
-        ways = [int(way) for way in n_way.split(',')]
+        # Automatically set n_way from 2 to num_classes
+        valid_ways = list(range(2, num_classes + 1))
+        print(f"Few-shot n_way automatically set to: {valid_ways}")
         
-        # Filter valid way values
-        valid_ways = [way for way in ways if way <= num_classes]
-        if len(valid_ways) != len(ways):
-            skipped_ways = [way for way in ways if way > num_classes]
-            print(f"Skipping invalid way values: {skipped_ways} (exceeds number of classes {num_classes})")
-
-        if args.use_all_way:
-            valid_ways = list(range(2, num_classes + 1))
+        # Parse n_shot parameter
+        n_shot_list = [int(shot.strip()) for shot in args.n_shot.split(',')]
+        
+        # Filter valid shot values based on minimum samples per class
+        valid_shots = [shot for shot in n_shot_list if shot <= min_samples_per_class]
+        if len(valid_shots) != len(n_shot_list):
+            skipped_shots = [shot for shot in n_shot_list if shot > min_samples_per_class]
+            print(f"Warning: Skipping invalid shot values: {skipped_shots} (exceeds minimum samples per class: {min_samples_per_class})")
+        print(f"Valid n_shot values: {valid_shots}")
         
         for way in valid_ways:
             save_dir = os.path.join(args.log_dir,'Few-shot',f'way_{way}')
             os.makedirs(save_dir,exist_ok=True)
-            
-            # Parse n_shot parameter
-            n_shot_list = [int(shot.strip()) for shot in args.n_shot.split(',')]
-            
-            # Filter valid shot values
-            valid_shots = [shot for shot in n_shot_list if shot <= min_samples_per_class]
             
             for shot in valid_shots:
                 fewshot_metrics_saver = create_metrics_saver(save_dir, f'Fewshot_{way}way_{shot}shot')
@@ -188,8 +231,8 @@ def main(args):
                 probs_all, targets_all = eval_fewshot(
                 train_feats = train_feats,
                 train_labels = train_labels,
-                valid_feats = val_feats ,
-                valid_labels = val_labels,
+                valid_feats = None,
+                valid_labels = None,
                 test_feats = test_feats,
                 test_labels = test_labels,
                 n_iter = args.n_iter, # draw 500 few-shot episodes
@@ -210,16 +253,13 @@ def main(args):
         class_names = load_class_names_from_txt(args.class2id_txt)
         
         # Merge features and labels
-        combined_feats = [train_feats, val_feats, test_feats] if val_feats is not None else [train_feats, test_feats]
-        combined_labels = [train_labels, val_labels, test_labels] if val_feats is not None else [train_labels, test_labels]
+        combined_feats = [train_feats, test_feats]
+        combined_labels = [train_labels, test_labels]
         
         # Merge img_names (if exists)
-        # Note: Usually only test set has img_names, train and val may not
         if test_img_names is not None:
-            # Create placeholders for train and val (if they don't have img_names)
             train_img_names = [f"train_{i}" for i in range(len(train_feats))]
-            val_img_names = [f"val_{i}" for i in range(len(val_feats))] if val_feats is not None else []
-            combined_img_names = train_img_names + val_img_names + test_img_names if val_feats is not None else train_img_names + test_img_names
+            combined_img_names = train_img_names + test_img_names
         else:
             combined_img_names = None
                 
@@ -272,25 +312,22 @@ if __name__ == '__main__':
     Few_shot_args = parser.add_argument_group('Few-shot')
     Zero_shot_args = parser.add_argument_group('Zero-shot')
     # General
-    General_args.add_argument('--TASK', type=str, default='Linear-Probe', help='Linear-Probe,KNN,Proto,Few-shot,Zero-shot')
-    General_args.add_argument('--class2id_txt', type=str, default='./datasets/CAMEL.txt')
-    General_args.add_argument('--train_feature_file', type=str, default='./ROI_Features/Dataset_[CAMEL]_Model_[conch_v1]_Size_[448]_train.pt', help='Path to training features file')
-    General_args.add_argument('--test_feature_file', type=str, default='./ROI_Features/Dataset_[CAMEL]_Model_[conch_v1]_Size_[448]_test.pt', help='Path to test features file')
-    General_args.add_argument('--val_feature_file', type=str, default=None, help='Path to validation features file (optional)')
+    General_args.add_argument('--TASK', type=str, default='Few-shot', help='Linear-Probe,KNN,Proto,Few-shot,Zero-shot')
+    General_args.add_argument('--class2id_txt', type=str, default='./KatherMS.txt')
+    General_args.add_argument('--train_feature_file', type=str, default='./Dataset_Feats/Dataset_[KatherMS]_Model_[uni_v2]_Size_[224]_train.pt', help='Path to training features file')
+    General_args.add_argument('--test_feature_file', type=str, default='./Dataset_Feats/Dataset_[KatherMS]_Model_[uni_v2]_Size_[224]_test.pt', help='Path to test features file')
     General_args.add_argument('--log_dir', default='./results', help='path where to save')
     General_args.add_argument('--log_description', type=str, default='ROI Benchmarking', help='Experiment description')
-    General_args.add_argument('--device', type=str, default='cuda' if torch.cuda.is_available() else 'cpu', help='Device') 
+    General_args.add_argument('--device', type=str, default='cuda:0' if torch.cuda.is_available() else 'cpu', help='Device') 
     # Linear_probe
     Linear_probe_args.add_argument('--max_iteration', type=int, default=1000)
     Linear_probe_args.add_argument('--use_sklearn', default=False, help='use sklearn logistic regression')
     # KNN_and_proto
     KNN_and_proto_args.add_argument('--n_neighbors', type=int, default=20)
     # Few_shot
-    Few_shot_args.add_argument('--n_iter', type=int, default=100) # Number of episodes
-    Few_shot_args.add_argument('--use_all_way', type=bool, default=True) # Whether to use all classes for few-shot
-    Few_shot_args.add_argument('--n_way', type=str, default='2,3,4,5,6,7,8,9,10') # Cannot exceed number of classes
+    Few_shot_args.add_argument('--n_iter', type=int, default=100, help='Number of episodes')
     Few_shot_args.add_argument('--n_shot', type=str, default='1,2,4,8,16,32,64,128,256', 
-                                help='Number of samples per class, comma-separated') # Number of samples per class    
+                                help='Number of samples per class, comma-separated. Note: n_way is automatically set from 2 to num_classes')    
     # Zero-shot
     Zero_shot_args.add_argument('--zeroshot_model_name', type=str, default='conch_v1', 
                                 help='Model name (created using model_factory, should contain encode_text method)')

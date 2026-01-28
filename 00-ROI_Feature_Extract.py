@@ -119,17 +119,17 @@ if __name__ == '__main__':
     
     # Dataset parameters
     parser.add_argument('--dataset_split_csv', type=str, 
-                        default='./datasets/CAMEL.csv',
+                        default='./datasets/KatherMS.csv',
                         help='Path to dataset split CSV file')
     parser.add_argument('--class2id_txt', type=str, 
-                        default='./datasets/CAMEL.txt',
+                        default='./datasets/KatherMS.txt',
                         help='Path to class to ID mapping file')
-    parser.add_argument('--dataset_name', type=str, default='CAMEL',
+    parser.add_argument('--dataset_name', type=str, default='KatherMS',
                         help='Dataset name for saving features')
     # Model parameters
     parser.add_argument('--model_name', type=str, default='conch_v1',
                         help='Model name')
-    parser.add_argument('--resize_size', type=int, default=448,
+    parser.add_argument('--resize_size', type=int, default=224,
                         help='Image resize size')
     # Training parameters
     parser.add_argument('--batch_size', type=int, default=256,

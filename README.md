@@ -322,6 +322,112 @@ Each task's metrics file contains:
 - ROC-AUC (if applicable)
 - Detailed per-sample prediction probabilities
 
+---
+
+### Step 3: Bootstrap Statistical Analysis
+
+Use `02-Bootstrap_Statistical_Analysis.py` to perform Bootstrap statistical analysis on evaluation results and calculate confidence intervals for metrics.
+
+#### Parameter Description
+
+```bash
+--results_dir        # Path to results directory (default: ./results)
+                     # Should contain experiment subdirectories with task results
+--n_bootstrap        # Number of Bootstrap samples (default: 1000)
+--random_state       # Random seed for reproducibility (default: 42)
+```
+
+#### Usage Examples
+
+**Basic Usage:**
+```bash
+python 02-Bootstrap_Statistical_Analysis.py \
+    --results_dir ./results \
+    --n_bootstrap 1000 \
+    --random_state 42
+```
+
+**Custom Parameters:**
+```bash
+python 02-Bootstrap_Statistical_Analysis.py \
+    --results_dir /path/to/results \
+    --n_bootstrap 1000 \
+    --random_state 42
+```
+
+#### Output Results
+
+The script will:
+
+1. **Traverse all experiments** in the results directory
+2. **Process each task** (Linear-Probe, KNN, Proto) that has `*_detailed_results.csv` files
+3. **Calculate Bootstrap confidence intervals** (95% CI by default) for all metrics
+4. **Save results** to JSON files
+
+**Output Structure:**
+```
+results/
+├── bootstrap_ci_summary.json                    # Summary of all experiments
+└── {experiment_name}/
+    ├── Linear-Probe/
+    │   └── Linear-Probe_bootstrap_ci.json      # Bootstrap CI for Linear-Probe
+    ├── KNN/
+    │   └── KNN_bootstrap_ci.json                # Bootstrap CI for KNN
+    └── Proto/
+        └── Proto_bootstrap_ci.json               # Bootstrap CI for Proto
+```
+
+**Bootstrap CI JSON Format:**
+Each `*_bootstrap_ci.json` file contains:
+```json
+{
+  "n_samples": 216912,
+  "n_classes": 2,
+  "n_bootstrap": 1000,
+  "ci_level": 0.95,
+  "metrics": {
+    "acc": {
+      "value": 0.6991,
+      "ci_lower": 0.6978,
+      "ci_upper": 0.7004,
+      "std": 0.0007,
+      "n_valid_bootstrap": 1000
+    },
+    "macro_auc": {
+      "value": 0.7331,
+      "ci_lower": 0.7315,
+      "ci_upper": 0.7347,
+      "std": 0.0008,
+      "n_valid_bootstrap": 1000
+    },
+    ...
+  }
+}
+```
+
+**Metrics Included:**
+- `acc`: Accuracy
+- `bacc`: Balanced Accuracy
+- `macro_f1`, `weighted_f1`, `micro_f1`: F1 Scores
+- `macro_precision`, `weighted_precision`: Precision
+- `macro_recall`, `weighted_recall`: Recall
+- `macro_auc`, `weighted_auc`, `micro_auc`: ROC-AUC
+- `macro_auprc`, `weighted_auprc`, `micro_auprc`: Average Precision
+- `brier_score`: Brier Score
+- `ece`, `mce`: Calibration Errors
+- `quadratic_kappa`, `linear_kappa`: Cohen's Kappa
+
+**Features:**
+- ✅ **Skip existing results**: Automatically skips processing if output JSON already exists
+- ✅ **Batch processing**: Processes all experiments and tasks in one run
+- ✅ **Comprehensive metrics**: Calculates CI for all evaluation metrics
+- ✅ **Reproducible**: Uses random seed for consistent results
+
+**Notes:**
+- The script only processes tasks that have `*_detailed_results.csv` files
+- If a `*_bootstrap_ci.json` file already exists, it will be skipped (useful for incremental processing)
+- Bootstrap sampling ensures robust statistical inference for model comparison
+
 ## 📁 Data Format
 
 This framework provides complete example datasets in the `example_dataset/` directory, demonstrating the required file formats and structure.
@@ -526,21 +632,33 @@ python 00-ROI_Feature_Extract.py \
 ```bash
 # Run all evaluation tasks
 python 01-ROI_BenchMark_Main.py \
-    --TASK Linear-Probe,KNN,Proto,Few-shot,Zero-shot \
+    --TASK Linear-Probe,KNN,Proto \
     --train_feature_file ./example_dataset/features/Dataset_[CRC-100K]_Model_[conch_v1]_Size_[448]_train.pt \
     --test_feature_file ./example_dataset/features/Dataset_[CRC-100K]_Model_[conch_v1]_Size_[448]_test.pt \
     --class2id_txt ./example_dataset/CRC-100K.txt \
-    --zeroshot_model_name conch_v1 \
-    --zeroshot_prompt_file ./example_dataset/CRC-100K-Zero_Shot_Prompts.txt \
     --log_dir ./results/CRC-100K_conch_v1 \
     --log_description "Comprehensive evaluation of CONCH v1 on CRC-100K dataset" \
     --device cuda:0
 ```
 
-**Step 3: Analyze Results**
+**Step 3: Bootstrap Statistical Analysis**
 ```bash
-# Results will be saved in ./results/CAMEL_conch_v1/
-# Each task folder contains detailed metrics and predictions
+# Perform Bootstrap analysis to calculate confidence intervals
+python 02-Bootstrap_Statistical_Analysis.py \
+    --results_dir ./results \
+    --n_bootstrap 1000 \
+    --random_state 42
+```
+
+**Step 4: Analyze Results**
+```bash
+# Results will be saved in ./results/CRC-100K_conch_v1/
+# Each task folder contains:
+#   - Detailed metrics and predictions (*_detailed_results.csv)
+#   - Complete results (*_complete_results.json)
+#   - Bootstrap confidence intervals (*_bootstrap_ci.json)
+# 
+# Summary of all experiments: ./results/bootstrap_ci_summary.json
 ```
 
 ## 🎯 Evaluation Tasks Explained
